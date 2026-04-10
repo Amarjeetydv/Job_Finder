@@ -18,20 +18,20 @@ session_start();
 	<input type="checkbox" id="check">
 	<div class="menu">
 		<ul>
-			<li><a href="#">Home</a></li>
-			<li><a href="#">Find a jobs</a></li>
-            <li><a href="#">About</a></li>
+			<li><a href="index.php">Home</a></li>
+			<li><a href="jobs.php">Find a jobs</a></li>
+            <li><a href="about.php">About</a></li>
            
             <li><a href="#"><label for="sub-check">Page +</label></a>
             <input type="checkbox" id="sub-check" style="display: none;">
             <ul class="submenu">
-            	<li><a href="#">Blog</a></li>
-            	<li><a href="#">Blog Details</a></li>
-                <li><a href="#">Elements</a></li>
-                <li><a href="#">job Details</a></li>
+            	<li><a href="blog.php">Blog</a></li>
+            	<li><a href="blog_details.php">Blog Details</a></li>
+                <li><a href="elements.php">Elements</a></li>
+                <li><a href="job_details.php">job Details</a></li>
             </ul>
             </li>
-			<li><a href="#">Content</a></li>
+			<li><a href="content.php">Content</a></li>
 		</ul>
 	</div>
 		<div class="button">
