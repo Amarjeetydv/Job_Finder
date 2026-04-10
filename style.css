@@ -52,7 +52,11 @@ nav>.menu>ul>li>ul>li>a{
 	text-decoration: none;
 	color: black;
 }
-nav>.button>.btn-1{
+nav .button a {
+	text-decoration: none;
+	display: inline-block;
+}
+nav .button .btn-1{
 	width: 100px;
 	height: 50px;
 	border: 1px solid red;
@@ -62,7 +66,7 @@ nav>.button>.btn-1{
 	background-color:rgba(245,20,20,.9);
 	z-index: 1;	              
 }
-nav>.button>.btn-1:before{
+nav .button .btn-1:before{
 	content: '';
 	width: 0;
 	height: 100%;
@@ -71,13 +75,13 @@ nav>.button>.btn-1:before{
 	left: 0;
 	top: 0;
 }
-nav>.button>.btn-1:hover:before{
+nav .button .btn-1:hover:before{
 	width: 100%;
 	transition: width .5s ease;
 	z-index: -1;
 	background-color: red;
 }
-nav>.button>.btn-2{
+nav .button .btn-2{
 	width: 100px;
 	height: 50px;
 	border: 1px solid red; 
@@ -86,7 +90,7 @@ nav>.button>.btn-2{
 	position: relative; 
 	z-index: 1;            
 }
-nav>.button>.btn-2:before{
+nav .button .btn-2:before{
 	content: '';
 	width: 0;
 	height: 100%;
@@ -95,7 +99,7 @@ nav>.button>.btn-2:before{
 	left: 0;
 	top: 0;
 }
-nav>.button>.btn-2:hover:before{
+nav .button .btn-2:hover:before{
 	width: 100%;
 	transition: width .5s ease;
 	z-index: -1;
@@ -429,10 +433,10 @@ nav>label{
 		left: 0;
 		top: 0;
 	}
-	nav>.button>.btn-1{
+	nav .button .btn-1{
 		display: none;
 	}
-	nav>.button>.btn-2{
+	nav .button .btn-2{
 		display: none;
 	}
 	nav>label{

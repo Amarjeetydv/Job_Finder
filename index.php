@@ -1,3 +1,6 @@
+<?php
+session_start();
+?>
 <!DOCTYPE html>
 <html>
 <head>
@@ -32,8 +35,13 @@
 		</ul>
 	</div>
 		<div class="button">
-			<button class="btn-1">Register</button>
-			<button class="btn-2">Login</button>
+			<?php if(isset($_SESSION['user_id'])): ?>
+				<span style="margin-right: 10px;">Hi, <?php echo htmlspecialchars($_SESSION['username']); ?></span>
+				<a href="logout.php"><button class="btn-2">Logout</button></a>
+			<?php else: ?>
+				<a href="register.php"><button class="btn-1">Register</button></a>
+				<a href="login.php"><button class="btn-2">Login</button></a>
+			<?php endif; ?>
 		</div>
 			
 			<label for="check">MENU <i class="fa fa-bars"></i></label>
