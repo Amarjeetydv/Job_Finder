@@ -290,8 +290,8 @@ if ($currentUserId > 0 && $currentUserRole !== 'employer' && $postJobNotice === 
 <html>
 <head>
 	<meta charset="utf-8">
-	<meta name="viewport" content="width=width-device, initial-scale=1.0, shrik-to-fit=yes">
-	<title></title>
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
+	<title>Job Finder - Find Your Dream Job | Job Search Platform</title>
 	<link rel="stylesheet" type="text/css" href="style.css">
 	<link rel="stylesheet" type="text/css" href="font-awesome\css\font-awesome.css">
 </head>
