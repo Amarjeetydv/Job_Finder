@@ -1,5 +1,198 @@
 <?php
 session_start();
+require_once 'db.php';
+require_once 'ui_helpers.php';
+
+function ensureUsersTableExtensions(mysqli $conn): void
+{
+	$roleColumn = $conn->query("SHOW COLUMNS FROM users LIKE 'role'");
+	if ($roleColumn && $roleColumn->num_rows === 0) {
+		$conn->query("ALTER TABLE users ADD COLUMN role ENUM('job_seeker', 'employer', 'admin') NOT NULL DEFAULT 'job_seeker'");
+	} else {
+		$conn->query("ALTER TABLE users MODIFY COLUMN role ENUM('job_seeker', 'employer', 'admin') NOT NULL DEFAULT 'job_seeker'");
+	}
+
+	$companyNameColumn = $conn->query("SHOW COLUMNS FROM users LIKE 'company_name'");
+	if ($companyNameColumn && $companyNameColumn->num_rows === 0) {
+		$conn->query("ALTER TABLE users ADD COLUMN company_name VARCHAR(160) DEFAULT NULL");
+	}
+
+	$companyDescriptionColumn = $conn->query("SHOW COLUMNS FROM users LIKE 'company_description'");
+	if ($companyDescriptionColumn && $companyDescriptionColumn->num_rows === 0) {
+		$conn->query("ALTER TABLE users ADD COLUMN company_description TEXT DEFAULT NULL");
+	}
+}
+
+function ensureJobsTable(mysqli $conn): void
+{
+	$conn->query("CREATE TABLE IF NOT EXISTS jobs (
+		id INT AUTO_INCREMENT PRIMARY KEY,
+		employer_id INT DEFAULT NULL,
+		title VARCHAR(120) NOT NULL,
+		company VARCHAR(120) NOT NULL,
+		company_description TEXT DEFAULT NULL,
+		location VARCHAR(60) NOT NULL,
+		job_type VARCHAR(40) NOT NULL,
+		salary VARCHAR(80) NOT NULL,
+		description TEXT NOT NULL,
+		approval_status ENUM('pending', 'approved', 'rejected') NOT NULL DEFAULT 'pending',
+		FOREIGN KEY (employer_id) REFERENCES users(id) ON DELETE SET NULL,
+		posted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)");
+
+	$employerColumn = $conn->query("SHOW COLUMNS FROM jobs LIKE 'employer_id'");
+	if ($employerColumn && $employerColumn->num_rows === 0) {
+		$conn->query("ALTER TABLE jobs ADD COLUMN employer_id INT DEFAULT NULL");
+	}
+	$companyDescriptionColumn = $conn->query("SHOW COLUMNS FROM jobs LIKE 'company_description'");
+	if ($companyDescriptionColumn && $companyDescriptionColumn->num_rows === 0) {
+		$conn->query("ALTER TABLE jobs ADD COLUMN company_description TEXT DEFAULT NULL");
+	}
+	$approvalColumn = $conn->query("SHOW COLUMNS FROM jobs LIKE 'approval_status'");
+	if ($approvalColumn && $approvalColumn->num_rows === 0) {
+		$conn->query("ALTER TABLE jobs ADD COLUMN approval_status ENUM('pending', 'approved', 'rejected') NOT NULL DEFAULT 'pending'");
+	}
+}
+
+function ensureApplicationsTable(mysqli $conn): void
+{
+	$conn->query("CREATE TABLE IF NOT EXISTS applications (
+		id INT AUTO_INCREMENT PRIMARY KEY,
+		user_id INT NOT NULL,
+		job_id INT NOT NULL,
+		status ENUM('pending', 'accepted', 'rejected') DEFAULT 'pending',
+		cover_letter TEXT,
+		applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+		FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+		UNIQUE KEY unique_application (user_id, job_id)
+	)");
+}
+
+function ensureSavedJobsTable(mysqli $conn): void
+{
+	$conn->query("CREATE TABLE IF NOT EXISTS saved_jobs (
+		id INT AUTO_INCREMENT PRIMARY KEY,
+		user_id INT NOT NULL,
+		job_id INT NOT NULL,
+		saved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+		FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+		UNIQUE KEY unique_saved_job (user_id, job_id)
+	)");
+}
+
+function seedJobsIfNeeded(mysqli $conn): void
+{
+	$result = $conn->query("SELECT COUNT(*) AS total FROM jobs");
+	$row = $result->fetch_assoc();
+
+	if ((int) $row['total'] > 0) {
+		return;
+	}
+
+	$conn->query(<<<'SQL'
+INSERT INTO jobs (title, company, location, job_type, salary, description) VALUES
+('Frontend Developer', 'Bright Labs', 'BD', 'Full Time', '$1800 - $2400', 'Build responsive web interfaces and work closely with the product team.'),
+('UI/UX Designer', 'Pixel Works', 'PK', 'Remote', '$1500 - $2200', 'Create user flows, wireframes, and polished interface designs.'),
+('Marketing Specialist', 'Growth Forge', 'US', 'Full Time', '$2500 - $3200', 'Plan campaigns, optimize acquisition, and support launch strategy.'),
+('Data Analyst', 'Insight Stack', 'UK', 'Contract', '$2200 - $2800', 'Analyze business data, build reports, and surface actionable insights.')
+SQL);
+}
+
+function fetchJobs(mysqli $conn, string $keyword, string $location, int $viewerUserId, int $isAdmin): array
+{
+	$normalizedLocation = $location === 'all' ? '' : $location;
+	$keywordFilter = '%' . $keyword . '%';
+	$locationFilter = $normalizedLocation;
+
+	$stmt = $conn->prepare(
+		"SELECT id, employer_id, title, company, company_description, location, job_type, salary, description, approval_status, posted_at
+		 FROM jobs
+		 WHERE (? = '' OR title LIKE ? OR company LIKE ? OR description LIKE ?)
+		   AND (? = '' OR location = ?)
+		   AND (approval_status = 'approved' OR employer_id = ? OR ? = 1)
+		 ORDER BY posted_at DESC"
+	);
+	$stmt->bind_param('ssssssii', $keyword, $keywordFilter, $keywordFilter, $keywordFilter, $locationFilter, $locationFilter, $viewerUserId, $isAdmin);
+	$stmt->execute();
+	$result = $stmt->get_result();
+	$jobs = $result->fetch_all(MYSQLI_ASSOC);
+	$stmt->close();
+
+	return $jobs;
+}
+
+function getAllJobs(mysqli $conn, int $viewerUserId, int $isAdmin): array
+{
+	$stmt = $conn->prepare(
+		"SELECT id, employer_id, title, company, company_description, location, job_type, salary, description, approval_status, posted_at
+		 FROM jobs
+		 WHERE approval_status = 'approved' OR employer_id = ? OR ? = 1
+		 ORDER BY posted_at DESC"
+	);
+	$stmt->bind_param('ii', $viewerUserId, $isAdmin);
+	$stmt->execute();
+	$result = $stmt->get_result();
+	$jobs = $result->fetch_all(MYSQLI_ASSOC);
+	$stmt->close();
+
+	return $jobs;
+}
+
+function userHasApplied(mysqli $conn, int $user_id, int $job_id): bool
+{
+	$stmt = $conn->prepare("SELECT id FROM applications WHERE user_id = ? AND job_id = ?");
+	$stmt->bind_param("ii", $user_id, $job_id);
+	$stmt->execute();
+	$result = $stmt->get_result();
+	$has_applied = $result->num_rows > 0;
+	$stmt->close();
+	return $has_applied;
+}
+
+function getApplicationStatus(mysqli $conn, int $user_id, int $job_id): ?string
+{
+	$stmt = $conn->prepare("SELECT status FROM applications WHERE user_id = ? AND job_id = ?");
+	$stmt->bind_param("ii", $user_id, $job_id);
+	$stmt->execute();
+	$result = $stmt->get_result();
+	$status = null;
+	
+	if ($row = $result->fetch_assoc()) {
+		$status = $row['status'];
+	}
+	$stmt->close();
+	return $status;
+}
+
+function userHasSaved(mysqli $conn, int $user_id, int $job_id): bool
+{
+	$stmt = $conn->prepare("SELECT id FROM saved_jobs WHERE user_id = ? AND job_id = ?");
+	$stmt->bind_param("ii", $user_id, $job_id);
+	$stmt->execute();
+	$result = $stmt->get_result();
+	$has_saved = $result->num_rows > 0;
+	$stmt->close();
+	return $has_saved;
+}
+
+ensureUsersTableExtensions($conn);
+ensureJobsTable($conn);
+seedJobsIfNeeded($conn);
+ensureApplicationsTable($conn);
+ensureSavedJobsTable($conn);
+
+$currentUserId = isset($_SESSION['user_id']) ? (int) $_SESSION['user_id'] : 0;
+$currentUserRole = $_SESSION['role'] ?? 'guest';
+$isAdmin = $currentUserRole === 'admin' ? 1 : 0;
+$keyword = trim($_GET['keyword'] ?? '');
+$location = trim($_GET['location'] ?? 'all');
+$searchSubmitted = isset($_GET['search']);
+$jobs = $searchSubmitted ? fetchJobs($conn, $keyword, $location, $currentUserId, $isAdmin) : [];
+$allJobs = getAllJobs($conn, $currentUserId, $isAdmin);
+$flashMessage = $_SESSION['flash_message'] ?? '';
+unset($_SESSION['flash_message']);
 ?>
 <!DOCTYPE html>
 <html>
@@ -17,26 +210,23 @@ session_start();
 	</div>
 	<input type="checkbox" id="check">
 	<div class="menu">
-		<ul>
-			<li><a href="#">Home</a></li>
-			<li><a href="#">Find a jobs</a></li>
-            <li><a href="#">About</a></li>
-           
-            <li><a href="#"><label for="sub-check">Page +</label></a>
-            <input type="checkbox" id="sub-check" style="display: none;">
-            <ul class="submenu">
-            	<li><a href="#">Blog</a></li>
-            	<li><a href="#">Blog Details</a></li>
-                <li><a href="#">Elements</a></li>
-                <li><a href="#">job Details</a></li>
-            </ul>
-            </li>
-			<li><a href="#">Content</a></li>
-		</ul>
+		<?php echo renderRoleAwareNav($currentUserRole); ?>
 	</div>
 		<div class="button">
 			<?php if(isset($_SESSION['user_id'])): ?>
-				<span style="margin-right: 10px;">Hi, <?php echo htmlspecialchars($_SESSION['username']); ?></span>
+				<?php echo renderSignedInIdentity((string) $_SESSION['username'], (string) $currentUserRole, 'Welcome back'); ?>
+				<?php if ($currentUserRole === 'job_seeker'): ?>
+					<a href="my_applications.php"><button class="btn-1">My Applications</button></a>
+					<a href="saved_jobs.php"><button class="btn-1">Saved Jobs</button></a>
+					<a href="profile.php"><button class="btn-1">Profile</button></a>
+				<?php elseif ($currentUserRole === 'employer'): ?>
+					<a href="post_job.php"><button class="btn-1">Post Job</button></a>
+					<a href="applications_dashboard.php"><button class="btn-1">Applications</button></a>
+					<a href="profile.php"><button class="btn-1">Profile</button></a>
+				<?php elseif ($currentUserRole === 'admin'): ?>
+					<a href="admin_approval.php"><button class="btn-1">Approvals</button></a>
+					<a href="profile.php"><button class="btn-1">Profile</button></a>
+				<?php endif; ?>
 				<a href="logout.php"><button class="btn-2">Logout</button></a>
 			<?php else: ?>
 				<a href="register.php"><button class="btn-1">Register</button></a>
@@ -53,16 +243,105 @@ session_start();
 		<h1>Find The Most Exiting Startup Jobs</h1>
 	</div>
 	<div class="input">
-		<input type="text" name="text" value="job Title or keyword" readonly>
-		<select>
-			<option>Location BD</option>
-			<option>Location PK</option>
-			<option>Locaton US</option>
-			<option>Location UK</option>
-		</select>
-		<button>Find Job</button>
+		<form method="GET" action="index.php" class="search-form">
+			<div class="search-wrapper">
+				<input type="search" id="keywordInput" name="keyword" placeholder="Job title or keyword" value="<?php echo htmlspecialchars($keyword); ?>" autocomplete="off">
+				<ul id="suggestionsList" class="suggestions-list"></ul>
+			</div>
+			<select name="location" class="location-select">
+				<option value="all" <?php echo $location === 'all' ? 'selected' : ''; ?>>All locations</option>
+				<option value="BD" <?php echo $location === 'BD' ? 'selected' : ''; ?>>Location BD</option>
+				<option value="PK" <?php echo $location === 'PK' ? 'selected' : ''; ?>>Location PK</option>
+				<option value="US" <?php echo $location === 'US' ? 'selected' : ''; ?>>Location US</option>
+				<option value="UK" <?php echo $location === 'UK' ? 'selected' : ''; ?>>Location UK</option>
+			</select>
+			<input type="hidden" name="search" value="1">
+			<button type="submit" class="search-btn">Search Jobs</button>
+		</form>
 	</div>	
 </div> 
+
+	<?php if ($flashMessage): ?>
+		<div class="flash-message"><?php echo htmlspecialchars($flashMessage); ?></div>
+	<?php endif; ?>
+
+<?php if ($searchSubmitted): ?>
+<div class="job-search-results">
+	<div class="results-header">
+		<span>JOB SEARCH</span>
+		<h3>Available job matches</h3>
+		<p>
+			<?php echo $keyword !== '' || $location !== 'all'
+				? 'Showing results for your selected keyword and location.'
+				: 'Showing all available jobs from the database.'; ?>
+		</p>
+	</div>
+
+	<?php if ($jobs): ?>
+		<div class="results-grid">
+			<?php foreach ($jobs as $job): 
+				$user_id = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
+				$has_applied = $user_id ? userHasApplied($conn, $user_id, $job['id']) : false;
+				$application_status = $user_id && $has_applied ? getApplicationStatus($conn, $user_id, $job['id']) : null;
+				$has_saved = $user_id ? userHasSaved($conn, $user_id, $job['id']) : false;
+			?>
+				<article class="job-card" data-job-id="<?php echo $job['id']; ?>">
+					<div class="job-card-top">
+						<h4><?php echo htmlspecialchars($job['title']); ?></h4>
+						<span><?php echo htmlspecialchars($job['job_type']); ?></span>
+					</div>
+					<p class="job-company"><?php echo htmlspecialchars($job['company']); ?></p>
+					<?php if (!empty($job['company_description'])): ?>
+						<p class="job-meta"><?php echo htmlspecialchars($job['company_description']); ?></p>
+					<?php endif; ?>
+					<?php if (($currentUserRole === 'employer') && ((int) ($job['employer_id'] ?? 0) === $currentUserId)): ?>
+						<p class="job-meta">Status: <?php echo htmlspecialchars(ucfirst($job['approval_status'])); ?></p>
+					<?php endif; ?>
+					<p class="job-meta"><i class="fa fa-map-marker"></i> <?php echo htmlspecialchars($job['location']); ?></p>
+					<p class="job-description"><?php echo htmlspecialchars($job['description']); ?></p>
+					<div class="job-footer">
+						<strong><?php echo htmlspecialchars($job['salary']); ?></strong>
+						<span><?php echo htmlspecialchars(date('M d, Y', strtotime($job['posted_at']))); ?></span>
+					</div>
+					<div class="job-actions">
+						<?php if ($user_id && $has_applied): ?>
+							<button class="apply-btn applied" disabled title="Application Status: <?php echo ucfirst($application_status); ?>">
+								<i class="fa fa-check"></i> Applied (<?php echo ucfirst($application_status); ?>)
+							</button>
+							<button class="withdraw-btn" data-job-id="<?php echo $job['id']; ?>">
+								<i class="fa fa-times"></i> Withdraw
+							</button>
+						<?php elseif ($user_id): ?>
+							<button class="apply-btn" data-job-id="<?php echo $job['id']; ?>">
+								<i class="fa fa-paper-plane"></i> Apply Now
+							</button>
+						<?php else: ?>
+							<button class="apply-btn login-required" onclick="alert('Please login to apply for jobs.')">
+								<i class="fa fa-paper-plane"></i> Apply Now
+							</button>
+						<?php endif; ?>
+						<?php if ($user_id): ?>
+							<form method="POST" action="save_job.php" class="save-job-form">
+								<input type="hidden" name="job_id" value="<?php echo $job['id']; ?>">
+								<input type="hidden" name="return_to" value="<?php echo htmlspecialchars($_SERVER['REQUEST_URI']); ?>">
+								<input type="hidden" name="action" value="<?php echo $has_saved ? 'unsave' : 'save'; ?>">
+								<button type="submit" class="save-btn <?php echo $has_saved ? 'saved' : ''; ?>">
+									<i class="fa <?php echo $has_saved ? 'fa-heart' : 'fa-heart-o'; ?>"></i>
+									<?php echo $has_saved ? 'Saved' : 'Bookmark'; ?>
+								</button>
+							</form>
+						<?php endif; ?>
+					</div>
+				</article>
+			<?php endforeach; ?>
+		</div>
+	<?php else: ?>
+		<div class="no-results">
+			No jobs found. Try a different keyword or location.
+		</div>
+	<?php endif; ?>
+</div>
+<?php endif; ?>
 
 
 <div class="categories">
@@ -373,7 +652,7 @@ session_start();
 
 </div>
 
-<div class="footer">
+<div class="footer" id="about">
 	<div class="row1">
 		<div class="div1">
 			<h3>ABOUT US</h3>
@@ -419,7 +698,7 @@ session_start();
 	</div>
 	<div class="row3">
 		<div class="div1">
-		<label>Copyright @2023 All rights reserved | This template is made with <i class="fa fa-heart"></i> by <span>Amarjeet Yadav</span></label>
+		<label>Copyright @2026 All rights reserved | This template is made with <i class="fa fa-heart"></i> by <span>Amarjeet Yadav</span></label>
 		</div>
 		<div class="div2">
 			<i class="fa fa-facebook"></i>
@@ -429,6 +708,159 @@ session_start();
 		</div>
 	</div>
 </div>
+
+<script>
+// Job data for autocomplete - passed from PHP
+const allJobsData = <?php echo json_encode(array_map(function($job) { return ['title' => $job['title'], 'company' => $job['company'], 'id' => $job['id']]; }, $allJobs)); ?>;
+
+// Autocomplete functionality
+document.addEventListener('DOMContentLoaded', function() {
+    const keywordInput = document.getElementById('keywordInput');
+    const suggestionsList = document.getElementById('suggestionsList');
+    
+    if (!keywordInput || !suggestionsList) return;
+    
+    // Show suggestions on input
+    keywordInput.addEventListener('input', function(e) {
+        const searchTerm = e.target.value.trim().toLowerCase();
+        
+        // Clear suggestions if input is empty
+        if (searchTerm.length === 0) {
+            suggestionsList.classList.remove('active');
+            suggestionsList.innerHTML = '';
+            return;
+        }
+        
+        // Filter jobs based on search term
+        const filteredJobs = allJobsData.filter(job => 
+            job.title.toLowerCase().includes(searchTerm) || 
+            job.company.toLowerCase().includes(searchTerm)
+        ).slice(0, 6); // Show max 6 suggestions
+        
+        // Display suggestions
+        if (filteredJobs.length > 0) {
+            suggestionsList.innerHTML = filteredJobs.map(job => 
+                `<li data-title="${escapeHtml(job.title)}">
+                    <div class="job-title">${highlightMatch(job.title, searchTerm)}</div>
+                    <div class="job-company">${escapeHtml(job.company)}</div>
+                </li>`
+            ).join('');
+            suggestionsList.classList.add('active');
+            
+            // Add click handlers to suggestions
+			document.querySelectorAll('#suggestionsList li').forEach(li => {
+                li.addEventListener('click', function() {
+                    keywordInput.value = this.dataset.title;
+                    suggestionsList.classList.remove('active');
+                    suggestionsList.innerHTML = '';
+                    // Optional: auto-submit or focus on location select
+					const locationSelect = document.querySelector('.location-select');
+					if (locationSelect) {
+						locationSelect.focus();
+					}
+                });
+            });
+        } else {
+            suggestionsList.innerHTML = '<li style="padding: 12px 16px; color: #999; text-align: center;">No jobs found</li>';
+            suggestionsList.classList.add('active');
+        }
+    });
+    
+    // Hide suggestions when clicking outside
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest('.search-wrapper') && !e.target.closest('#suggestionsList')) {
+            suggestionsList.classList.remove('active');
+        }
+    });
+});
+
+// Helper function to escape HTML
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Helper function to highlight matching text
+function highlightMatch(text, searchTerm) {
+    const regex = new RegExp(`(${searchTerm})`, 'gi');
+    return text.replace(regex, '<strong>$1</strong>');
+}
+
+// Job Application Handler
+function handleJobApplication(jobId, action = 'apply') {
+    // For now, just submit without cover letter (user can add modal form later)
+    const coverLetter = '';
+
+    const payload = {
+        job_id: jobId,
+        action: action,
+        cover_letter: coverLetter
+    };
+
+    fetch('apply_job.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert(data.message);
+            location.reload(); // Reload page to show updated status
+        } else {
+            alert('Error: ' + data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('An error occurred. Please try again.');
+    });
+}
+
+// Attach event listeners to apply and withdraw buttons
+document.addEventListener('DOMContentLoaded', function() {
+    // Apply buttons
+    document.querySelectorAll('.apply-btn:not(.login-required)').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const jobId = this.getAttribute('data-job-id');
+            handleJobApplication(jobId, 'apply');
+        });
+    });
+
+    // Withdraw buttons
+    document.querySelectorAll('.withdraw-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            if (confirm('Are you sure you want to withdraw your application?')) {
+                const jobId = this.getAttribute('data-job-id');
+                handleJobApplication(jobId, 'withdraw');
+            }
+        });
+    });
+});
+
+// Smooth scrolling for About link
+const aboutLink = document.querySelector('a[href="#about"]');
+if (aboutLink) {
+	aboutLink.addEventListener('click', function(e) {
+		e.preventDefault();
+		const target = document.querySelector('#about');
+		const navbar = document.querySelector('nav');
+		if (!target || !navbar) {
+			return;
+		}
+		const navbarHeight = navbar.offsetHeight;
+		const targetPosition = target.getBoundingClientRect().top + window.pageYOffset - navbarHeight;
+
+		window.scrollTo({
+			top: targetPosition,
+			behavior: 'smooth'
+		});
+	});
+}
+</script>
 
 </body>
 </html>

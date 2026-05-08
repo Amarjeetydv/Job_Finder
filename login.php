@@ -3,12 +3,34 @@ require_once 'db.php';
 session_start();
 $error = "";
 
+function ensureUsersTableExtensions(mysqli $conn): void
+{
+    $roleColumn = $conn->query("SHOW COLUMNS FROM users LIKE 'role'");
+    if ($roleColumn && $roleColumn->num_rows === 0) {
+        $conn->query("ALTER TABLE users ADD COLUMN role ENUM('job_seeker', 'employer', 'admin') NOT NULL DEFAULT 'job_seeker'");
+    } else {
+        $conn->query("ALTER TABLE users MODIFY COLUMN role ENUM('job_seeker', 'employer', 'admin') NOT NULL DEFAULT 'job_seeker'");
+    }
+
+    $companyNameColumn = $conn->query("SHOW COLUMNS FROM users LIKE 'company_name'");
+    if ($companyNameColumn && $companyNameColumn->num_rows === 0) {
+        $conn->query("ALTER TABLE users ADD COLUMN company_name VARCHAR(160) DEFAULT NULL");
+    }
+
+    $companyDescriptionColumn = $conn->query("SHOW COLUMNS FROM users LIKE 'company_description'");
+    if ($companyDescriptionColumn && $companyDescriptionColumn->num_rows === 0) {
+        $conn->query("ALTER TABLE users ADD COLUMN company_description TEXT DEFAULT NULL");
+    }
+}
+
+ensureUsersTableExtensions($conn);
+
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $email = trim($_POST['email']);
     $password = $_POST['password'];
 
     if (!empty($email) && !empty($password)) {
-        $stmt = $conn->prepare("SELECT id, username, password FROM users WHERE email = ?");
+        $stmt = $conn->prepare("SELECT id, username, password, role, company_name, company_description FROM users WHERE email = ?");
         $stmt->bind_param("s", $email);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -17,6 +39,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             if (password_verify($password, $user['password'])) {
                 $_SESSION['user_id'] = $user['id'];
                 $_SESSION['username'] = $user['username'];
+                $_SESSION['role'] = $user['role'] ?? 'job_seeker';
+                $_SESSION['company_name'] = $user['company_name'] ?? '';
+                $_SESSION['company_description'] = $user['company_description'] ?? '';
                 header("Location: index.php");
                 exit();
             } else {
