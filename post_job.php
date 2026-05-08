@@ -72,8 +72,39 @@ $user = $roleStmt->get_result()->fetch_assoc() ?: [];
 $roleStmt->close();
 
 if (($user['role'] ?? 'job_seeker') !== 'employer') {
-    $_SESSION['flash_message'] = 'Only employer accounts can post jobs.';
-    header('Location: index.php');
+    // For logged-in non-employer users, show a friendly notice page
+    // instead of bouncing them back to the homepage.
+    $notice = 'Only employer accounts can post jobs.';
+    ?>
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>Post a Job — Access Restricted</title>
+        <link rel="stylesheet" type="text/css" href="style.css">
+        <style>
+            .notice-wrap{max-width:700px;margin:80px auto;padding:24px;border:1px solid #eee;border-radius:8px;background:#fff;text-align:left}
+            .notice-wrap h2{margin-top:0;color:#222}
+            .notice-actions{margin-top:18px;display:flex;gap:12px}
+            .notice-actions a{padding:10px 14px;border-radius:6px;text-decoration:none}
+            .btn-primary{background:#242b5e;color:#fff}
+            .btn-outline{border:1px solid #ccc;color:#333}
+        </style>
+    </head>
+    <body>
+    <div class="notice-wrap">
+        <h2>Employer Account Required</h2>
+        <p><?php echo htmlspecialchars($notice); ?></p>
+        <p>If you want to post jobs, convert your account to an employer or contact our support team for assistance.</p>
+        <div class="notice-actions">
+            <a class="btn-primary" href="profile.php">Go to Profile</a>
+            <a class="btn-outline" href="mailto:support@jobfinder.com">Contact Support</a>
+            <a class="btn-outline" href="index.php">Back to Home</a>
+        </div>
+    </div>
+    </body>
+    </html>
+    <?php
     exit();
 }
 

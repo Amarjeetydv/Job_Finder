@@ -100,21 +100,97 @@ INSERT INTO jobs (title, company, location, job_type, salary, description) VALUE
 SQL);
 }
 
-function fetchJobs(mysqli $conn, string $keyword, string $location, int $viewerUserId, int $isAdmin): array
+function getCategoryDefinitions(): array
+{
+	return [
+		'design-creative' => [
+			'label' => 'Design & Creative',
+			'icon' => 'fa-address-book-o',
+			'pattern' => '(design|creative|ui|ux|graphic)',
+		],
+		'design-development' => [
+			'label' => 'Design & Development',
+			'icon' => 'fa-desktop',
+			'pattern' => '(development|developer|frontend|backend|software|web)',
+		],
+		'sales-marketing' => [
+			'label' => 'Sales & Marketing',
+			'icon' => 'fa-bar-chart',
+			'pattern' => '(sales|marketing|seo|brand|campaign|content)',
+		],
+		'mobile-application' => [
+			'label' => 'Mobile Application',
+			'icon' => 'fa-mobile',
+			'pattern' => '(mobile|android|ios|app)',
+		],
+		'construction' => [
+			'label' => 'Construction',
+			'icon' => 'fa-connectdevelop',
+			'pattern' => '(construction|civil|architecture|site)',
+		],
+		'information-technology' => [
+			'label' => 'Information Technology',
+			'icon' => 'fa-newspaper-o',
+			'pattern' => '(it|technology|tech|data|analyst|computer)',
+		],
+		'real-estate' => [
+			'label' => 'Real Estate',
+			'icon' => 'fa-home',
+			'pattern' => '(real estate|property|agent|broker)',
+		],
+		'content-writer' => [
+			'label' => 'Content Writer',
+			'icon' => 'fa-pencil-square-o',
+			'pattern' => '(writer|content|copy|editor|blog)',
+		],
+	];
+}
+
+function countCategoryJobs(array $jobs, string $categorySlug): int
+{
+	$categories = getCategoryDefinitions();
+	if (!isset($categories[$categorySlug])) {
+		return 0;
+	}
+
+	$pattern = '/' . $categories[$categorySlug]['pattern'] . '/i';
+	$count = 0;
+	foreach ($jobs as $job) {
+		$searchableText = strtolower(implode(' ', [
+			(string) ($job['title'] ?? ''),
+			(string) ($job['company'] ?? ''),
+			(string) ($job['company_description'] ?? ''),
+			(string) ($job['description'] ?? ''),
+			(string) ($job['job_type'] ?? ''),
+			(string) ($job['location'] ?? ''),
+		]));
+
+		if (preg_match($pattern, $searchableText)) {
+			$count++;
+		}
+	}
+
+	return $count;
+}
+
+function fetchJobs(mysqli $conn, string $keyword, string $location, string $category, int $viewerUserId, int $isAdmin): array
 {
 	$normalizedLocation = $location === 'all' ? '' : $location;
 	$keywordFilter = '%' . $keyword . '%';
 	$locationFilter = $normalizedLocation;
+	$categoryDefinitions = getCategoryDefinitions();
+	$categoryFilter = $category !== '' && isset($categoryDefinitions[$category]) ? $categoryDefinitions[$category]['pattern'] : '';
 
 	$stmt = $conn->prepare(
 		"SELECT id, employer_id, title, company, company_description, location, job_type, salary, description, approval_status, posted_at
 		 FROM jobs
 		 WHERE (? = '' OR title LIKE ? OR company LIKE ? OR description LIKE ?)
 		   AND (? = '' OR location = ?)
+		   AND (? = '' OR LOWER(CONCAT_WS(' ', title, company, company_description, description, job_type, location)) REGEXP ?)
 		   AND (approval_status = 'approved' OR employer_id = ? OR ? = 1)
 		 ORDER BY posted_at DESC"
 	);
-	$stmt->bind_param('ssssssii', $keyword, $keywordFilter, $keywordFilter, $keywordFilter, $locationFilter, $locationFilter, $viewerUserId, $isAdmin);
+	$stmt->bind_param('ssssssssii', $keyword, $keywordFilter, $keywordFilter, $keywordFilter, $locationFilter, $locationFilter, $categoryFilter, $categoryFilter, $viewerUserId, $isAdmin);
 	$stmt->execute();
 	$result = $stmt->get_result();
 	$jobs = $result->fetch_all(MYSQLI_ASSOC);
@@ -188,11 +264,27 @@ $currentUserRole = $_SESSION['role'] ?? 'guest';
 $isAdmin = $currentUserRole === 'admin' ? 1 : 0;
 $keyword = trim($_GET['keyword'] ?? '');
 $location = trim($_GET['location'] ?? 'all');
-$searchSubmitted = isset($_GET['search']);
-$jobs = $searchSubmitted ? fetchJobs($conn, $keyword, $location, $currentUserId, $isAdmin) : [];
+$category = trim($_GET['category'] ?? '');
+$searchSubmitted = isset($_GET['search']) || $category !== '';
+$jobs = $searchSubmitted ? fetchJobs($conn, $keyword, $location, $category, $currentUserId, $isAdmin) : [];
 $allJobs = getAllJobs($conn, $currentUserId, $isAdmin);
+$categoryDefinitions = getCategoryDefinitions();
+$selectedCategoryLabel = $category !== '' && isset($categoryDefinitions[$category]) ? $categoryDefinitions[$category]['label'] : '';
 $flashMessage = $_SESSION['flash_message'] ?? '';
 unset($_SESSION['flash_message']);
+$postJobUrl = 'login.php?redirect=post_job.php';
+if ($currentUserId > 0) {
+	$postJobUrl = $currentUserRole === 'employer' ? 'post_job.php' : 'javascript:void(0);';
+}
+// move the 'Only employer accounts can post jobs.' message to show beside the Post a Job button
+$postJobNotice = '';
+if ($flashMessage === 'Only employer accounts can post jobs.') {
+	$postJobNotice = $flashMessage;
+	$flashMessage = '';
+}
+if ($currentUserId > 0 && $currentUserRole !== 'employer' && $postJobNotice === '') {
+	$postJobNotice = 'Only employer accounts can post jobs.';
+}
 ?>
 <!DOCTYPE html>
 <html>
@@ -215,18 +307,6 @@ unset($_SESSION['flash_message']);
 		<div class="button">
 			<?php if(isset($_SESSION['user_id'])): ?>
 				<?php echo renderSignedInIdentity((string) $_SESSION['username'], (string) $currentUserRole, 'Welcome back'); ?>
-				<?php if ($currentUserRole === 'job_seeker'): ?>
-					<a href="my_applications.php"><button class="btn-1">My Applications</button></a>
-					<a href="saved_jobs.php"><button class="btn-1">Saved Jobs</button></a>
-					<a href="profile.php"><button class="btn-1">Profile</button></a>
-				<?php elseif ($currentUserRole === 'employer'): ?>
-					<a href="post_job.php"><button class="btn-1">Post Job</button></a>
-					<a href="applications_dashboard.php"><button class="btn-1">Applications</button></a>
-					<a href="profile.php"><button class="btn-1">Profile</button></a>
-				<?php elseif ($currentUserRole === 'admin'): ?>
-					<a href="admin_approval.php"><button class="btn-1">Approvals</button></a>
-					<a href="profile.php"><button class="btn-1">Profile</button></a>
-				<?php endif; ?>
 				<a href="logout.php"><button class="btn-2">Logout</button></a>
 			<?php else: ?>
 				<a href="register.php"><button class="btn-1">Register</button></a>
@@ -266,14 +346,20 @@ unset($_SESSION['flash_message']);
 	<?php endif; ?>
 
 <?php if ($searchSubmitted): ?>
-<div class="job-search-results">
+<div class="job-search-results" id="job-search-results">
 	<div class="results-header">
 		<span>JOB SEARCH</span>
-		<h3>Available job matches</h3>
+		<h3><?php echo $selectedCategoryLabel !== '' ? htmlspecialchars($selectedCategoryLabel) . ' Jobs' : 'Available job matches'; ?></h3>
 		<p>
-			<?php echo $keyword !== '' || $location !== 'all'
-				? 'Showing results for your selected keyword and location.'
-				: 'Showing all available jobs from the database.'; ?>
+			<?php
+			if ($selectedCategoryLabel !== '') {
+				echo 'Showing jobs that match ' . htmlspecialchars($selectedCategoryLabel) . '.';
+			} elseif ($keyword !== '' || $location !== 'all') {
+				echo 'Showing results for your selected keyword and location.';
+			} else {
+				echo 'Showing all available jobs from the database.';
+			}
+			?>
 		</p>
 	</div>
 
@@ -344,102 +430,39 @@ unset($_SESSION['flash_message']);
 <?php endif; ?>
 
 
-<div class="categories">
-	<label>FEATURED TOURS PACKAGES</label>
+<div class="categories" id="browse-categories">
 	<span>Browse Top Categaries</span>
 </div>
 
 <div class="flex">
-	<div class="item item-1">
-		<div class="img">
-			<i class="fa fa-address-book-o"></i>
-		</div>
-		<div class="flex-text">
-			<h3>Design & Creative</h3>
-			<span>(658)</span>
-		</div>
-	</div>
-
-	<div class="item item-2">
-		<div class="img">
-			<i class="fa fa-desktop"></i>
-		</div>
-		<div class="flex-text">
-			<h3>Design & Development</h3>
-			<span>(658)</span>
-		</div>
-	</div>
-
-	<div class="item item-3">
-		<div class="img">
-			<i class="fa fa-bar-chart"></i>
-		</div>
-		<div class="flex-text">
-			<h3> Sales & Marketing</h3>
-			<span>(658)</span>
-		</div>
-	</div>
-
-	<div class="item item-4">
-		<div class="img">
-			<i class="fa fa-mobile"></i>
-		</div>
-		<div class="flex-text">
-			<h3>Mobile Application</h3>
-			<span>(658)</span>
-		</div>
-	</div>
-
-	<div class="item item-5">
-		<div class="img">
-			<i class="fa fa-connectdevelop"></i>
-		</div>
-		<div class="flex-text">
-			<h3>Construction</h3>
-			<span>(658)</span>
-		</div>
-	</div>
-
-	<div class="item item-6">
-		<div class="img">
-			<i class="fa fa-newspaper-o"></i>
-		</div>
-		<div class="flex-text">
-			<h3>Information Technology</h3>
-			<span>(658)</span>
-		</div>
-	</div>
-
-	<div class="item item-7">
-		<div class="img">
-			<i class="fa fa-home"></i>
-		</div>
-		<div class="flex-text">
-			<h3>Real Estate</h3>
-			<span>(658)</span>
-		</div>
-	</div>
-
-	<div class="item item-8">
-		<div class="img">
-			<i class="fa fa-pencil-square-o"></i>
-		</div>
-		<div class="flex-text">
-			<h3>Content Writer</h3>
-			<span>(658)</span>
-		</div>
-	</div>
+	<?php foreach ($categoryDefinitions as $slug => $categoryDefinition): ?>
+		<a class="category-link" href="index.php?search=1&category=<?php echo urlencode($slug); ?>#job-search-results">
+			<div class="item item-<?php echo htmlspecialchars((string) $slug); ?>">
+				<div class="img">
+					<i class="fa <?php echo htmlspecialchars($categoryDefinition['icon']); ?>"></i>
+				</div>
+				<div class="flex-text">
+					<h3><?php echo htmlspecialchars($categoryDefinition['label']); ?></h3>
+					<span>(<?php echo countCategoryJobs($allJobs, $slug); ?>)</span>
+				</div>
+			</div>
+		</a>
+	<?php endforeach; ?>
 
 </div>
 
-<div class="sections">BROWSE ALL SECTIONS</div>
+<div class="sections"><a href="index.php?search=1#job-search-results">BROWSE ALL SECTIONS</a></div>
 
 <div class="blue">
 
 	<div class="overlay">
-		<h6>FEATURED TOURS PACKAGES</h6>
-		<label>MAKE a Difference with your Online Resume!</label>
-		<div class="cv">UPLOAD YOUR CV</div>
+		<div class="overlay-text">
+			<h6>FEATURED TOURS PACKAGES</h6>
+			<label>MAKE a Difference with your Online Resume!</label>
+		</div>
+		<div class="overlay-cta">
+			<a href="<?php echo isset($_SESSION['user_id']) ? 'profile.php' : 'login.php'; ?>" class="cv-btn">Upload Your CV</a>
+		</div>
 	</div>
 </div>
 
@@ -448,72 +471,37 @@ unset($_SESSION['flash_message']);
 	<h3>Featured Jobs</h3>
 </div>
 <div class="table">
+	<?php 
+	// Display first 4 approved jobs from database
+	$featuredJobs = array_slice($allJobs, 0, 4);
+	if (count($featuredJobs) > 0):
+		foreach ($featuredJobs as $featuredJob):
+	?>
 	<div class="line-1">
 		<div class="div1">
-		<img src="img/job-list1.png.webp">
+		<div class="featured-job-avatar" aria-hidden="true">
+			<i class="fa fa-briefcase"></i>
+		</div>
 		<div class="div1-text">	
-		<h2>Digital Marketer</h2>
-			<label class="text">Creative Agency</label>
-			<label class="country"><i class="fa fa-map-marker"></i> Athens,Greece</label>
-			<label class="num">$3500-$4000</label>
+		<h2><?php echo htmlspecialchars($featuredJob['title']); ?></h2>
+			<label class="text"><?php echo htmlspecialchars($featuredJob['company']); ?></label>
+			<label class="country"><i class="fa fa-map-marker"></i> <?php echo htmlspecialchars($featuredJob['location']); ?></label>
+			<label class="num"><?php echo htmlspecialchars($featuredJob['salary']); ?></label>
 			</div>
 		</div>
 		<div class="div3">
-		  <input type="button" value="Full Time">
-			<label>7 hours ago</label>
+		  <input type="button" value="<?php echo htmlspecialchars($featuredJob['job_type']); ?>">
+			<label><?php echo htmlspecialchars(date('M d, Y', strtotime($featuredJob['posted_at']))); ?></label>
 		</div>
 	</div>
-
-
-	<div class="line-1">
-		<div class="div1">
-		<img src="img/job-list2.png%20(1).webp">
-		<div class="div1-text">	
-		<h2>Digital Marketer</h2>
-			<label class="text">Creative Agency</label>
-			<label class="country"><i class="fa fa-map-marker"></i> Athens,Greece</label>
-			<label class="num">$3500-$4000</label>
-			</div>
-		</div>
-		<div class="div3">
-		  <input type="button" value="Full Time">
-			<label>7 hours ago</label>
-		</div>
+	<?php 
+		endforeach;
+	else:
+	?>
+	<div style="padding: 40px; text-align: center; color: #999;">
+		<p>No featured jobs available yet.</p>
 	</div>
-
-
-	<div class="line-1">
-		<div class="div1">
-		<img src="img/job-list3.png%20(1).webp">
-		<div class="div1-text">	
-		<h2>Digital Marketer</h2>
-			<label class="text">Creative Agency</label>
-			<label class="country"><i class="fa fa-map-marker"></i> Athens,Greece</label>
-			<label class="num">$3500-$4000</label>
-			</div>
-		</div>
-		<div class="div3">
-		  <input type="button" value="Full Time">
-			<label>7 hours ago</label>
-		</div>
-	</div>
-
-
-	<div class="line-1">
-		<div class="div1">
-		<img src="img/job-list4.png%20(1).webp">
-		<div class="div1-text">	
-		<h2>Digital Marketer</h2>
-			<label class="text">Creative Agency</label>
-			<label class="country"><i class="fa fa-map-marker"></i> Athens,Greece</label>
-			<label class="num">$3500-$4000</label>
-			</div>
-		</div>
-		<div class="div3">
-		  <input type="button" value="Full Time">
-			<label>7 hours ago</label>
-		</div>
-	</div>
+	<?php endif; ?>
 </div>
 <div class="apply">
 		<div class="head">
@@ -525,7 +513,7 @@ unset($_SESSION['flash_message']);
 			<div class="search">
 				<i class="fa fa-leanpub"></i>
 				<h5>1.Search a job</h5>
-				<p>Sorem spsum dolor sit amsectetur adipisclit. seddo eiusmod tempor incididunt ut laboria.</p>
+				<p>Use the search bar, location filter, or category cards to quickly find roles that match your skills and career goals.</p>
 			</div>
 		</div>
 		
@@ -533,7 +521,7 @@ unset($_SESSION['flash_message']);
 			<div class="search">
 				<i class="fa fa-address-card-o"></i>
 				<h5>2.Apply for job</h5>
-				<p>Sorem spsum dolor sit amsectetur adipisclit. seddo eiusmod tempor incididunt ut laboria.</p>
+				<p>Open a job, review the requirements, and submit your application in one click from your dashboard account.</p>
 			</div>
 		</div>
 		
@@ -542,7 +530,7 @@ unset($_SESSION['flash_message']);
 			<div class="search">
 				<i class="fa fa-user-circle"></i>
 				<h5>3.Get your job</h5>
-				<p>Sorem spsum dolor sit amsectetur adipisclit. seddo eiusmod tempor incididunt ut laboria.</p>
+				<p>Track your application status and respond to updates so you can move from interview to offer with confidence.</p>
 			</div>
 		</div>
     </div>
@@ -550,42 +538,68 @@ unset($_SESSION['flash_message']);
 
 
 
-<div class="checkslider">
-  <div class="content">
+<div class="checkslider" id="testimonials">
+	<div class="content">
+		<?php
+		function isFemaleName($name){
+				$femaleNames = ['neha','priya','anita','sara','sarah','maria','neha'];
+				$parts = preg_split('/\s+/', trim($name));
+				$first = strtolower($parts[0] ?? '');
+				if(in_array($first, $femaleNames, true)) return true;
+				if(preg_match('/[aeiou]$/i', $first)) return true;
+				return false;
+		}
+			// prefer a female avatar if present (check multiple file types), otherwise fall back to the default founder image
+			$femaleCandidates = [
+				__DIR__ . '/img/testimonial-woman.png.webp',
+				__DIR__ . '/img/testimonial-woman.png',
+				__DIR__ . '/img/testimonial-woman.svg'
+			];
+			$femaleImg = 'img/testimonial-founder.png.webp';
+			foreach ($femaleCandidates as $c) {
+				if (file_exists($c)) {
+					$femaleImg = 'img/' . basename($c);
+					break;
+				}
+			}
+		?>
   		 <input type="radio" name="r" id="r1" >
 		  <input type="radio" name="r" id="r2">
           <input type="radio" name="r" id="r3">
     <div class="check check1">
-	    <div class="img">
-		   <img src="img/testimonial-founder.png.webp">
-	      </div>
-	    <div class="text">
-		    <h5>Margaret Lawson</h5>
-		    <label>Creative Director</label>
-		    <p>"I am at an age where i just want to be fit and healthy our bodies are our responsibility! So start caring for your body and it will care for you.Eat clean it will care for you and workout hard."</p>
-	   </div>
+    	<div class="img">
+    	   <?php $t_name = 'Neha Kapoor'; $t_img = 'img/testimonial-woman-1.png'; ?>
+    	   <img src="<?php echo $t_img; ?>">
+    	  </div>
+    	<div class="text">
+    	    <h5><?php echo $t_name; ?></h5>
+    	    <label>UI/UX Designer</label>
+    	    <p>"Job Finder made my search simple. I filtered by role and location, applied in minutes, and got interview calls within the same week."</p>
+    	</div>
     </div>
 
      <div class="check check2">
-	    <div class="img">
-		   <img src="img/testimonial-founder.png.webp">
-	      </div>
-	    <div class="text">
-		    <h5>Margaret Lawson</h5>
-		    <label>Creative Director</label>
-		    <p>"I am at an age where i just want to be fit and healthy our bodies are our responsibility! So start caring for your body and it will care for you.Eat clean it will care for you and workout hard."</p>
-	   </div>
+    	<div class="img">
+    	   <?php $t_name = 'Rohan Verma'; $t_img = isFemaleName($t_name) ? $femaleImg : 'img/testimonial-founder.png.webp'; ?>
+    	   <img src="<?php echo $t_img; ?>">
+    	  </div>
+    	<div class="text">
+    	    <h5><?php echo $t_name; ?></h5>
+    	    <label>Frontend Developer</label>
+    	    <p>"The job listings are clear and the application flow is smooth. I could track each status update from my profile dashboard without confusion."</p>
+    	</div>
     </div>
 
      <div class="check check3">
-	    <div class="img">
-		   <img src="img/testimonial-founder.png.webp">
-	      </div>-
-	    <div class="text">
-		    <h5>Margaret Lawson</h5>
-		    <label>Creative Director</label>
-		    <p>"I am at an age where i just want to be fit and healthy our bodies are our responsibility! So start caring for your body and it will care for you.Eat clean it will care for you and workout hard."</p>
-	   </div>
+    	<div class="img">
+    	   <?php $t_name = 'Priya Sharma'; $t_img = 'img/testimonial-woman-2.png'; ?>
+    	   <img src="<?php echo $t_img; ?>">
+    	  </div>
+    	<div class="text">
+    	    <h5><?php echo $t_name; ?></h5>
+    	    <label>Marketing Specialist</label>
+    	    <p>"I liked how fast I could shortlist jobs and apply. The platform feels practical, especially for anyone who wants a focused and stress-free search."</p>
+    	</div>
     </div>
     </div>
 	      <div class="dots">
@@ -596,13 +610,21 @@ unset($_SESSION['flash_message']);
 </div>
 
 
-<div class="container1">
+<div class="container1" id="post-job-cta">
 	<div class=" column column1">
-		<span>What we are doing</span>
-		<h3>25k Talented people are getting jobs</h3>
-		<p class="p1">Molit anim laborum duis au doalor in voluptate velit ess cillum dolore eu lore dsu quality molit anim laborumuis au dolor in voluptate velit cilum.</p>
-		<p class="p2">Molit anim laborum.Duis aut irufg dhjkolohr in re voluptate velit esscillulore eu quife nrulla parihatur.Excghcepteur signijnt occa cupidatat non inulpadeserunt molit abour.temnthp incididbnt ut jabore molitanim laborum suis aut.</p>
-		<button>Post A job</button>
+		<span>What We Do</span>
+		<h3>25,000+ talented professionals found jobs with us</h3>
+		<p class="p1">We help job seekers discover relevant roles quickly — filter by role, location, and skills, then apply in just a few clicks.</p>
+		<p class="p2">Employers can post openings fast and manage applications from a simple dashboard. Our streamlined process connects great candidates to great opportunities.</p>
+		<?php if (!empty($postJobNotice)): ?>
+			<div class="post-job-note" style="background:#ffe6e6; border:1px solid #c33; border-radius:4px; padding:8px 12px; margin-bottom:12px; color:#c33; font-weight:500; font-size:13px; display:flex; align-items:center; gap:6px; max-width:400px;">
+				<span style="font-size:14px; flex-shrink:0;">⚠️</span>
+				<span><?php echo htmlspecialchars($postJobNotice); ?></span>
+			</div>
+		<?php endif; ?>
+		<a href="<?php echo htmlspecialchars($postJobUrl); ?>" style="text-decoration: none;">
+			<button onclick="return true;">Post a Job</button>
+		</a>
 	</div>
 	<div class=" column column2">
         <div class="since">
@@ -613,8 +635,8 @@ unset($_SESSION['flash_message']);
 </div>
 
 <div class="head">
-		<span>OUR LATEST BLOG</span>
-		<h3>Our recent news</h3>
+		<span>CAREER RESOURCES</span>
+		<h3>Job search tips and industry insights</h3>
 	</div>
 <div class="zoom">	
 	
@@ -622,14 +644,13 @@ unset($_SESSION['flash_message']);
 		<div class="image">
 		<img src="img/home-blog1.jpg.webp">
 		<div class="overlay1">
-			<h1>24 NOW</h1>
+			<h1>CAREER TIP</h1>
 		</div>
 		</div>
         <div class="txt1"> 
-        	<span>|  Properties</span>
-        	<p>Footprints in Time is perfect
-        	House in Kurashiki</p>
-        	<a href="#">READ MORE<i class="fa fa-angle-double-right"></i></a>
+        	<span>|  Career Development</span>
+        	<p>Master your interview skills and land your dream job with confidence</p>
+        	<a href="javascript:void(0);" style="cursor:pointer;">READ MORE<i class="fa fa-angle-double-right"></i></a>
         </div>
 	</div>
 
@@ -638,14 +659,13 @@ unset($_SESSION['flash_message']);
 		<div class="image">
 		<img src="img/home-blog2.jpg.webp">
 		<div class="overlay2">
-			<h1>24 NOW</h1>
+			<h1>INDUSTRY NEWS</h1>
 		</div>
 		</div>
         <div class="txt2"> 
-        	<span>| Properties</span>
-        	<p>Footprints in Time is perfect
-        	House in Kurashiki</p>
-        	<a href="#">READ MORE<i class="fa fa-angle-double-right"></i></a>
+        	<span>| Market Trends</span>
+        	<p>Top 10 in-demand skills employers are looking for in 2024</p>
+        	<a href="javascript:void(0);" style="cursor:pointer;">READ MORE<i class="fa fa-angle-double-right"></i></a>
         </div>
 	</div>
 
@@ -656,27 +676,33 @@ unset($_SESSION['flash_message']);
 	<div class="row1">
 		<div class="div1">
 			<h3>ABOUT US</h3>
-			<p>Heaven frucvitful doesn't cover lesser dvsays appear creeping seasons so behold.
+			<p>Job Finder is a modern job search platform connecting talented professionals with leading employers. We make hiring and job hunting simple, fast, and effective for everyone.
 		</div>
 		<div class="div2">
 			<h3>CONTACT INFO </h3>
-			<span>Address:Your address goes here.</span>
-			<span>Your demo address.</span>
-			<label>Phone:+888044338899</label>
-			<label>Email:info@colorlib.com</label>
+			<span>Address: Tech Hub, Innovation District</span>
+			<span>Business Park, Metro City</span>
+			<label>Phone: +1-800-JOB-FIND</label>
+			<label>Email: support@jobfinder.com</label>
 		</div>
 		<div class="div3">
 			<h3>IMPORTANT LINK</h3>
-			<label>View Project</label>
-			<label>Contact Us</label>
-			<label>Testimonial</label>
-			<label>Properties</label>
-			<label>Support</label>
+			<a href="index.php" style="display:block;color:inherit;text-decoration:none;margin-bottom:10px;">Browse Jobs</a>
+			<a href="index.php#about" style="display:block;color:inherit;text-decoration:none;margin-bottom:10px;">About Us</a>
+			<a href="index.php#testimonials" style="display:block;color:inherit;text-decoration:none;margin-bottom:10px;">Testimonials</a>
+			<?php if ($currentUserId > 0 && ($currentUserRole === 'employer' || $currentUserRole === 'admin')): ?>
+				<a href="post_job.php" style="display:block;color:inherit;text-decoration:none;margin-bottom:10px;">Post a Job</a>
+			<?php elseif ($currentUserId > 0): ?>
+				<a href="javascript:void(0);" style="display:block;color:inherit;text-decoration:none;margin-bottom:10px;opacity:0.6;cursor:not-allowed;" title="Employer account required">Post a Job</a>
+			<?php else: ?>
+				<a href="login.php?redirect=post_job.php" style="display:block;color:inherit;text-decoration:none;margin-bottom:10px;">Post a Job</a>
+			<?php endif; ?>
+			<a href="mailto:support@jobfinder.com" style="display:block;color:inherit;text-decoration:none;margin-bottom:10px;">Support</a>
 		</div>
 		<div class="div4">
 			<h3>NEWS LETTER</h3>
-			<P>Heaven fruitful doesn't over lesser in days. Appear creeping.</P>
-			<input type="email" name="email"><i class="fa fa-send"></i>
+			<P>Subscribe to get job alerts and career tips delivered to your inbox.</P>
+			<input type="email" name="email" placeholder="Enter your email"><i class="fa fa-send"></i>
 		</div>
 	</div>
 	<div class="row2">
@@ -684,16 +710,16 @@ unset($_SESSION['flash_message']);
 			<img src="img/logo2_footer.png.webp">
 		</div>
 		<div class="div2">
-			<h2>5000+</h2>
-			<h5>Talented Hunter</h5>
+			<h2>25000+</h2>
+			<h5>Job Seekers</h5>
 		</div>
 		<div class="div3">
-			<h2>451</h2>
-			<h5>Talented Hunter</h5>
+			<h2>5000+</h2>
+			<h5>Active Jobs</h5>
 		</div>
 		<div class="div4">
-			<h2>568</h2>
-			<h5>Talented Hunter</h5>
+			<h2>800+</h2>
+			<h5>Employers</h5>
 		</div>
 	</div>
 	<div class="row3">
@@ -709,6 +735,44 @@ unset($_SESSION['flash_message']);
 	</div>
 </div>
 
+<script>
+// Robust autoplay for testimonial radio slider
+document.addEventListener('DOMContentLoaded', function(){
+	const radios = Array.from(document.querySelectorAll('input[name="r"]'));
+	if (!radios.length) return;
+
+	// Ensure a radio is checked initially
+	if (!radios.some(r=>r.checked)) {
+		radios[0].checked = true;
+	}
+
+	function getCurrentIndex(){
+		return radios.findIndex(r=>r.checked);
+	}
+
+	function goTo(index){
+		radios[index].checked = true;
+		// dispatch change so any listeners respond
+		radios[index].dispatchEvent(new Event('change', { bubbles: true }));
+	}
+
+	let autoplayInterval = 4000;
+	let autoplayId = setInterval(()=>{
+		const next = (getCurrentIndex() + 1) % radios.length;
+		goTo(next);
+	}, autoplayInterval);
+
+	const slider = document.querySelector('.checkslider');
+	if (slider) {
+		slider.addEventListener('mouseenter', ()=>{ clearInterval(autoplayId); autoplayId = null; });
+		slider.addEventListener('mouseleave', ()=>{ if (!autoplayId) autoplayId = setInterval(()=>{ const next = (getCurrentIndex() + 1) % radios.length; goTo(next); }, autoplayInterval); });
+		slider.addEventListener('focusin', ()=>{ clearInterval(autoplayId); autoplayId = null; });
+		slider.addEventListener('focusout', ()=>{ if (!autoplayId) autoplayId = setInterval(()=>{ const next = (getCurrentIndex() + 1) % radios.length; goTo(next); }, autoplayInterval); });
+	}
+
+	radios.forEach(r=> r.addEventListener('change', ()=>{ if (autoplayId) { clearInterval(autoplayId); autoplayId = setInterval(()=>{ const next = (getCurrentIndex() + 1) % radios.length; goTo(next); }, autoplayInterval); } }));
+});
+</script>
 <script>
 // Job data for autocomplete - passed from PHP
 const allJobsData = <?php echo json_encode(array_map(function($job) { return ['title' => $job['title'], 'company' => $job['company'], 'id' => $job['id']]; }, $allJobs)); ?>;

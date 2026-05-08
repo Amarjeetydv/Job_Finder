@@ -109,11 +109,31 @@ $pendingStmt->close();
         .admin-card { background: #fff; border: 1px solid #e2e8f4; border-radius: 14px; padding: 16px; box-shadow: 0 8px 20px rgba(17, 24, 39, 0.08); }
         .admin-card h3 { margin-bottom: 6px; color: #1e293b; }
         .admin-meta { color: #64748b; font-size: 14px; margin-bottom: 8px; }
-        .admin-actions { margin-top: 12px; display: flex; gap: 10px; }
+        .admin-actions { margin-top: 12px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
         .admin-actions form { margin: 0; }
-        .approve-btn, .reject-btn { border: none; border-radius: 9px; padding: 10px 12px; color: #fff; cursor: pointer; font-weight: 700; }
+        .approve-btn, .reject-btn {
+            border: none;
+            border-radius: 9px;
+            padding: 10px 14px;
+            min-height: 42px;
+            width: auto;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            color: #fff;
+            cursor: pointer;
+            font-weight: 700;
+            white-space: nowrap;
+            transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+        }
         .approve-btn { background: #15803d; }
         .reject-btn { background: #b91c1c; }
+        .approve-btn:hover, .reject-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 20px rgba(15, 23, 42, 0.18);
+            filter: brightness(1.03);
+        }
         .empty { background: #fff; border: 1px dashed #d4dce9; border-radius: 14px; padding: 18px; color: #64748b; }
     </style>
 </head>

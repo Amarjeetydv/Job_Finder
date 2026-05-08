@@ -22,7 +22,6 @@ function renderRoleAwareNav(string $role): string
 {
 	$links = [
 		['label' => 'Home', 'href' => 'index.php'],
-		['label' => 'Find Jobs', 'href' => 'index.php#jobs'],
 		['label' => 'About', 'href' => 'index.php#about']
 	];
 

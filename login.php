@@ -2,6 +2,14 @@
 require_once 'db.php';
 session_start();
 $error = "";
+$redirect = trim($_GET['redirect'] ?? $_POST['redirect'] ?? '');
+
+if ($redirect !== '') {
+    // Allow only local relative targets to prevent open redirects.
+    if (strpos($redirect, '://') !== false || strpos($redirect, '..') !== false || str_starts_with($redirect, '/')) {
+        $redirect = '';
+    }
+}
 
 function ensureUsersTableExtensions(mysqli $conn): void
 {
@@ -42,7 +50,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 $_SESSION['role'] = $user['role'] ?? 'job_seeker';
                 $_SESSION['company_name'] = $user['company_name'] ?? '';
                 $_SESSION['company_description'] = $user['company_description'] ?? '';
-                header("Location: index.php");
+                $target = $redirect !== '' ? $redirect : 'index.php';
+                header("Location: " . $target);
                 exit();
             } else {
                 $error = "Invalid password.";
@@ -74,6 +83,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         <h2>Login</h2>
         <?php if($error) echo "<div class='message error'>$error</div>"; ?>
         <form method="POST">
+            <input type="hidden" name="redirect" value="<?php echo htmlspecialchars($redirect); ?>">
             <input type="email" name="email" placeholder="Email" required>
             <input type="password" name="password" placeholder="Password" required>
             <button type="submit">Login</button>

@@ -375,6 +375,8 @@ if ($isJobSeeker) {
             border: none;
             border-radius: 12px;
             padding: 12px 18px;
+            min-height: 46px;
+            width: auto;
             font-weight: 700;
             cursor: pointer;
             transition: transform 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
@@ -383,6 +385,12 @@ if ($isJobSeeker) {
             align-items: center;
             gap: 8px;
             justify-content: center;
+        }
+        .submit-row .primary-btn,
+        .submit-row .secondary-btn,
+        .top-links .secondary-btn {
+            width: auto;
+            flex: 0 0 auto;
         }
         .primary-btn {
             background: linear-gradient(135deg, #242b5e 0%, #1a1f47 100%);
